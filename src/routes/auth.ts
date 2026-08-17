@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import type { PoolClient } from "pg";
 import type { Request, Response } from "express";
 import {
   createUserSession,
@@ -24,8 +25,15 @@ function param(value: string | string[]): string {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function subscriptionDisabled(res: Response) {
-  return error(res, 503, "subscription_disabled", "Subscription features are not enabled yet.");
+
+async function validPlan(client: PoolClient, planId: string) {
+  const plan = await repository.getPlan(client, planId);
+  return plan?.is_active ? plan : null;
+}
+
+async function validAccessCode(client: PoolClient, accessCodeValue: string) {
+  const accessCode = await repository.getAccessCode(client, accessCodeValue);
+  return accessCode?.is_active ? accessCode : null;
 }
 
 function setSessionHeaders(res: Response, token: string) {
@@ -124,11 +132,113 @@ export async function handleSignup(req: Request, res: Response) {
 }
 
 export async function handleSignupAndSubscribe(req: Request, res: Response) {
-  return subscriptionDisabled(res);
+  const email = normalizeEmail(String(req.body.email ?? ""));
+  const password = String(req.body.password ?? "");
+  const planId = String(req.body.planId ?? "");
+
+  if (!email || !email.includes("@")) {
+    return error(res, 400, "invalid_email");
+  }
+
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return error(res, 400, "invalid_password", passwordError);
+  }
+
+  if (!planId) {
+    return error(res, 400, "plan_required");
+  }
+
+  const now = new Date();
+  const result = await withClient(async (client) => {
+    if (await repository.getUserByEmail(client, email)) {
+      return null;
+    }
+    const plan = await validPlan(client, planId);
+    if (!plan) {
+      return { kind: "plan_not_found" as const };
+    }
+
+    const created = await repository.createUser(client, {
+      userId: randomUUID(),
+      email,
+      passwordHash: await hashPassword(password),
+    });
+    await repository.activatePlaceholderSubscription(client, {
+      subscriptionId: randomUUID(),
+      userId: created.id,
+      planId,
+      now,
+    });
+    const userView = await repository.getUserViewById(client, created.id);
+    const token = await createUserSession(created.id, client);
+    return { kind: "ok" as const, userView, token };
+  });
+
+  if (result?.kind === "plan_not_found") {
+    return error(res, 404, "plan_not_found");
+  }
+  if (!result?.userView) {
+    return error(res, 409, "email_exists");
+  }
+
+  setSessionHeaders(res, result.token);
+  return res.status(201).json({ user: serializeUser(result.userView) });
 }
 
 export async function handleSignupWithAccessCode(req: Request, res: Response) {
-  return subscriptionDisabled(res);
+  const email = normalizeEmail(String(req.body.email ?? ""));
+  const password = String(req.body.password ?? "");
+  const accessCodeValue = String(req.body.accessCode ?? "");
+
+  if (!email || !email.includes("@")) {
+    return error(res, 400, "invalid_email");
+  }
+
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return error(res, 400, "invalid_password", passwordError);
+  }
+
+  if (!accessCodeValue) {
+    return error(res, 400, "access_code_required");
+  }
+
+  const now = new Date();
+  const result = await withClient(async (client) => {
+    if (await repository.getUserByEmail(client, email)) {
+      return null;
+    }
+    const accessCode = await validAccessCode(client, accessCodeValue);
+    if (!accessCode) {
+      return { kind: "invalid_access_code" as const };
+    }
+
+    const created = await repository.createUser(client, {
+      userId: randomUUID(),
+      email,
+      passwordHash: await hashPassword(password),
+    });
+    await repository.activatePlaceholderSubscription(client, {
+      subscriptionId: randomUUID(),
+      userId: created.id,
+      planId: accessCode.target_plan_id,
+      now,
+    });
+    const userView = await repository.getUserViewById(client, created.id);
+    const token = await createUserSession(created.id, client);
+    return { kind: "ok" as const, userView, token };
+  });
+
+  if (result?.kind === "invalid_access_code") {
+    return error(res, 400, "invalid_access_code");
+  }
+  if (!result?.userView) {
+    return error(res, 409, "email_exists");
+  }
+
+  setSessionHeaders(res, result.token);
+  return res.status(201).json({ user: serializeUser(result.userView) });
 }
 
 export async function handleSignin(req: Request, res: Response) {
@@ -190,15 +300,74 @@ export async function handleMe(req: Request, res: Response) {
 }
 
 export async function handlePlans(_req: Request, res: Response) {
-  return subscriptionDisabled(res);
+  const plans = await withClient((client) => repository.listActivePlans(client));
+  return res.json({ plans });
 }
 
-export async function handlePlanSelect(_req: Request, res: Response) {
-  return subscriptionDisabled(res);
+export async function handlePlanSelect(req: Request, res: Response) {
+  const user = await currentUser(req, { requireActive: false });
+  if (!user) {
+    return error(res, 401, "unauthorized");
+  }
+
+  const planId = String(req.body.planId ?? "");
+  if (!planId) {
+    return error(res, 400, "plan_required");
+  }
+
+  const now = new Date();
+  const result = await withClient(async (client) => {
+    const plan = await validPlan(client, planId);
+    if (!plan) {
+      return null;
+    }
+    await repository.activatePlaceholderSubscription(client, {
+      subscriptionId: randomUUID(),
+      userId: user.id,
+      planId,
+      now,
+    });
+    return repository.getUserViewById(client, user.id);
+  });
+
+  if (!result) {
+    return error(res, 404, "plan_not_found");
+  }
+
+  return res.json({ user: serializeUser(result) });
 }
 
-export async function handleActivateWithAccessCode(_req: Request, res: Response) {
-  return subscriptionDisabled(res);
+export async function handleActivateWithAccessCode(req: Request, res: Response) {
+  const user = await currentUser(req, { requireActive: false });
+  if (!user) {
+    return error(res, 401, "unauthorized");
+  }
+
+  const accessCodeValue = String(req.body.accessCode ?? "");
+  if (!accessCodeValue) {
+    return error(res, 400, "access_code_required");
+  }
+
+  const now = new Date();
+  const result = await withClient(async (client) => {
+    const accessCode = await validAccessCode(client, accessCodeValue);
+    if (!accessCode) {
+      return null;
+    }
+    await repository.activatePlaceholderSubscription(client, {
+      subscriptionId: randomUUID(),
+      userId: user.id,
+      planId: accessCode.target_plan_id,
+      now,
+    });
+    return repository.getUserViewById(client, user.id);
+  });
+
+  if (!result) {
+    return error(res, 400, "invalid_access_code");
+  }
+
+  return res.json({ user: serializeUser(result) });
 }
 
 export async function handleForgotPassword(req: Request, res: Response) {
@@ -264,12 +433,68 @@ export async function handleResetPassword(req: Request, res: Response) {
   return res.json({ status: "password_reset" });
 }
 
-export async function handlePlaceholderStart(_req: Request, res: Response) {
-  return subscriptionDisabled(res);
+export async function handlePlaceholderStart(req: Request, res: Response) {
+  const email = normalizeEmail(String(req.body.email ?? ""));
+  const planId = String(req.body.planId ?? "");
+
+  const result = await withClient(async (client) => {
+    const user = await repository.getUserByEmail(client, email);
+    const plan = await repository.getPlan(client, planId);
+    return { user, plan };
+  });
+
+  if (!result.user) {
+    return error(res, 404, "user_not_found");
+  }
+  if (!result.plan?.is_active) {
+    return error(res, 404, "plan_not_found");
+  }
+
+  return res.json({ checkoutId: randomUUID(), planId, status: "started" });
 }
 
-export async function handlePlaceholderComplete(_req: Request, res: Response) {
-  return subscriptionDisabled(res);
+export async function handlePlaceholderComplete(req: Request, res: Response) {
+  const settings = getSettings();
+  if (settings.isProduction) {
+    return error(res, 403, "disabled");
+  }
+
+  const email = normalizeEmail(String(req.body.email ?? ""));
+  const planId = String(req.body.planId ?? "");
+  const checkoutId = String(req.body.checkoutId ?? "");
+
+  if (!checkoutId) {
+    return error(res, 400, "missing_checkout_id");
+  }
+
+  const now = new Date();
+  const result = await withClient(async (client) => {
+    const user = await repository.getUserByEmail(client, email);
+    const plan = await repository.getPlan(client, planId);
+    if (!user) {
+      return { kind: "user_not_found" as const };
+    }
+    if (!plan?.is_active) {
+      return { kind: "plan_not_found" as const };
+    }
+
+    await repository.activatePlaceholderSubscription(client, {
+      subscriptionId: randomUUID(),
+      userId: user.id,
+      planId,
+      now,
+    });
+    return { kind: "ok" as const };
+  });
+
+  if (result.kind === "user_not_found") {
+    return error(res, 404, "user_not_found");
+  }
+  if (result.kind === "plan_not_found") {
+    return error(res, 404, "plan_not_found");
+  }
+
+  return res.json({ status: "paid", subscriptionStatus: "active", planId });
 }
 
 export async function handleAdminUsers(req: Request, res: Response) {
@@ -364,8 +589,51 @@ export async function handleAdminDeleteUser(req: Request, res: Response) {
   return res.json({ status: "deleted" });
 }
 
-export async function handleAdminSubscription(_req: Request, res: Response) {
-  return subscriptionDisabled(res);
+export async function handleAdminSubscription(req: Request, res: Response) {
+  const admin = await requireAdmin(req, res);
+  if (!admin) {
+    return;
+  }
+
+  const userId = param(req.params.userId);
+  const planId = String(req.body.planId ?? "");
+  const status = String(req.body.status ?? "");
+
+  if (status !== "active" && status !== "inactive") {
+    return error(res, 400, "invalid_subscription_status");
+  }
+  if (!planId) {
+    return error(res, 400, "plan_required");
+  }
+
+  const now = new Date();
+  const result = await withClient(async (client) => {
+    const target = await repository.getUserById(client, userId);
+    if (!target) {
+      return { kind: "user_not_found" as const };
+    }
+    const plan = await validPlan(client, planId);
+    if (!plan) {
+      return { kind: "plan_not_found" as const };
+    }
+    await repository.updateSubscriptionStatus(client, {
+      userId,
+      planId,
+      status,
+      now,
+    });
+    const userView = await repository.getUserViewById(client, userId);
+    return { kind: "ok" as const, userView };
+  });
+
+  if (result.kind === "plan_not_found") {
+    return error(res, 404, "plan_not_found");
+  }
+  if (result.kind === "user_not_found") {
+    return error(res, 404, "user_not_found");
+  }
+
+  return res.json({ user: serializeUser(result.userView!) });
 }
 
 export async function handleAdminPasswordReset(req: Request, res: Response) {

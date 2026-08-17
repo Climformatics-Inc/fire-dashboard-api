@@ -6,17 +6,25 @@ import helmet from "helmet";
 import { getSettings } from "./config.js";
 import { adminActionLimiter, authActionLimiter, passwordResetLimiter } from "./rate-limit.js";
 import {
+  handleActivateWithAccessCode,
   handleAdminDeleteUser,
   handleAdminDisableUser,
   handleAdminEnableUser,
   handleAdminPasswordReset,
+  handleAdminSubscription,
   handleAdminUsers,
   handleForgotPassword,
   handleMe,
+  handlePlaceholderComplete,
+  handlePlaceholderStart,
+  handlePlanSelect,
+  handlePlans,
   handleResetPassword,
   handleSignin,
   handleSignout,
   handleSignup,
+  handleSignupAndSubscribe,
+  handleSignupWithAccessCode,
 } from "./routes/auth.js";
 import { assertSecureStartupConfig } from "./startup-checks.js";
 
@@ -48,17 +56,26 @@ app.get("/", (_req, res) => {
 });
 
 app.post("/auth/signup", authActionLimiter, handleSignup);
+app.post("/auth/signup-and-subscribe", authActionLimiter, handleSignupAndSubscribe);
+app.post("/auth/signup-with-access-code", authActionLimiter, handleSignupWithAccessCode);
 app.post("/auth/signin", authActionLimiter, handleSignin);
 app.post("/auth/signout", handleSignout);
 app.get("/auth/me", handleMe);
 app.post("/auth/forgot-password", passwordResetLimiter, handleForgotPassword);
 app.post("/auth/reset-password", authActionLimiter, handleResetPassword);
 
+app.get("/plans", handlePlans);
+app.post("/plans/select", authActionLimiter, handlePlanSelect);
+app.post("/plans/activate-with-access-code", authActionLimiter, handleActivateWithAccessCode);
+app.post("/checkout/placeholder/start", authActionLimiter, handlePlaceholderStart);
+app.post("/checkout/placeholder/complete", authActionLimiter, handlePlaceholderComplete);
+
 app.get("/admin/users", adminActionLimiter, handleAdminUsers);
 app.post("/admin/users/:userId/disable", adminActionLimiter, handleAdminDisableUser);
 app.post("/admin/users/:userId/enable", adminActionLimiter, handleAdminEnableUser);
 app.post("/admin/users/:userId/delete", adminActionLimiter, handleAdminDeleteUser);
 app.post("/admin/users/:userId/password-reset", passwordResetLimiter, handleAdminPasswordReset);
+app.post("/admin/users/:userId/subscription", adminActionLimiter, handleAdminSubscription);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(error);

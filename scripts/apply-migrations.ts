@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import "dotenv/config";
+import { createPgClientConfig } from "../src/pg-config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.join(__dirname, "..", "migrations");
@@ -13,7 +14,7 @@ async function main() {
     throw new Error("DATABASE_URL is not configured");
   }
 
-  const client = new pg.Client({ connectionString: databaseUrl });
+  const client = new pg.Client(createPgClientConfig(databaseUrl));
   await client.connect();
 
   await client.query(`

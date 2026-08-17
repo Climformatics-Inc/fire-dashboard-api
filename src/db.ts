@@ -1,5 +1,6 @@
 import pg from "pg";
 import { getSettings } from "./config.js";
+import { createPgClientConfig } from "./pg-config.js";
 
 const { Pool } = pg;
 
@@ -15,7 +16,7 @@ export function getPool(): pg.Pool {
     throw new Error("DATABASE_URL is not configured");
   }
 
-  pool = new Pool({ connectionString: settings.databaseUrl });
+  pool = new Pool(createPgClientConfig(settings.databaseUrl));
   return pool;
 }
 
