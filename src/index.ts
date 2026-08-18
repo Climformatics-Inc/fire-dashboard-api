@@ -43,7 +43,30 @@ app.use(
 
 app.use(
   cors({
-    origin: settings.frontendOrigin,
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      const allowed = settings.frontendOrigin;
+      if (!settings.isProduction) {
+        const isLocalDev =
+          /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+          (allowed != null && origin === allowed);
+        if (isLocalDev) {
+          callback(null, origin);
+          return;
+        }
+      }
+
+      if (allowed != null && origin === allowed) {
+        callback(null, origin);
+        return;
+      }
+
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
     allowedHeaders: ["Content-Type", "Accept", "Authorization", "X-Session-Token"],
   })

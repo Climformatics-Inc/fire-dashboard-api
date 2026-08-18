@@ -7,7 +7,7 @@ Node.js port of the Monthly Rain 8-SI auth API for the Fire Weather Dashboard.
 Same auth surface as `monthly-rain-8si-dashboard-api`:
 
 - Sign up / sign in / sign out
-- Session cookies and `X-Session-Token` header
+- Session cookies (HttpOnly)
 - Plans and placeholder subscription checkout
 - Access-code signup and activation
 - Password reset (via Resend)
@@ -15,9 +15,17 @@ Same auth surface as `monthly-rain-8si-dashboard-api`:
 
 ## Stack
 
+**Local development**
+
 - Express + TypeScript
 - PostgreSQL (`pg`)
 - Argon2 password hashing
+
+**Production (DigitalOcean)**
+
+- Python `auth_api` on **DigitalOcean Functions** (`packages/fire_dashboard/auth_api/`)
+- Same HTTP routes and Postgres schema as the Express app
+- Deploy via GitHub Actions or `doctl serverless deploy` — see **[DEPLOY.md](./DEPLOY.md)**
 
 ## Setup
 
@@ -82,9 +90,13 @@ Then replace fake `AuthGate` logic with calls to the same endpoints used by Mont
 
 ## Production
 
+**Recommended:** DigitalOcean **Functions** (low cost, same pattern as Monthly Rain 8-SI).
+
+See **[DEPLOY.md](./DEPLOY.md)** for step-by-step instructions.
+
+**Alternative:** Express Web Service (always-on Node server):
+
 ```bash
 npm run build
 npm start
 ```
-
-Deploy as a Node service (Railway, Render, Fly.io, etc.) with `DATABASE_URL` and the env vars from `.env.example`.

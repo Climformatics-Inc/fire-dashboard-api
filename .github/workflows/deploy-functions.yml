@@ -1,0 +1,50 @@
+name: Deploy Functions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/**"
+      - "project.yml"
+      - ".github/workflows/deploy-functions.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: fire-dashboard-api-functions-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Install serverless support
+        run: doctl serverless install
+
+      - name: Connect to Functions namespace
+        run: doctl serverless connect ${{ secrets.FUNCTIONS_NAMESPACE }}
+
+      - name: Deploy auth_api function
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FRONTEND_ORIGIN: ${{ secrets.FRONTEND_ORIGIN }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          ENVIRONMENT: ${{ secrets.ENVIRONMENT }}
+          SESSION_COOKIE_NAME: ${{ secrets.SESSION_COOKIE_NAME }}
+          SESSION_TTL_SECONDS: ${{ secrets.SESSION_TTL_SECONDS }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          PASSWORD_RESET_FROM_EMAIL: ${{ secrets.PASSWORD_RESET_FROM_EMAIL }}
+          PASSWORD_RESET_TOKEN_TTL_SECONDS: ${{ secrets.PASSWORD_RESET_TOKEN_TTL_SECONDS }}
+          PASSWORD_RESET_EMAIL_SUBJECT: ${{ secrets.PASSWORD_RESET_EMAIL_SUBJECT }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_PLAN_ID: ${{ secrets.ADMIN_PLAN_ID }}
+        run: doctl serverless deploy .
