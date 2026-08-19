@@ -25,7 +25,7 @@ class Settings:
 def get_settings() -> Settings:
     return Settings(
         database_url=os.getenv("DATABASE_URL"),
-        frontend_origin=os.getenv("FRONTEND_ORIGIN"),
+        frontend_origin=(os.getenv("FRONTEND_ORIGIN") or "").rstrip("/") or None,
         environment=os.getenv("ENVIRONMENT", "development"),
         session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "fire_dashboard_session"),
         session_secret=os.getenv("SESSION_SECRET", "local-dev-session-secret"),

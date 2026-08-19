@@ -37,8 +37,9 @@ async function validAccessCode(client: PoolClient, accessCodeValue: string) {
 }
 
 function setSessionHeaders(res: Response, token: string) {
-  // HttpOnly cookie only — do not expose session tokens to JavaScript via headers.
   res.setHeader("Set-Cookie", buildSessionCookie(token));
+  // Required for cross-origin DO Functions; same-site local dev can use cookies instead.
+  res.setHeader("X-Session-Token", token);
 }
 
 function safeEqualString(left: string, right: string): boolean {

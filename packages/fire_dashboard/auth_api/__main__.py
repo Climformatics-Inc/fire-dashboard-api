@@ -204,7 +204,10 @@ def session_response(
         event,
         status_code,
         payload,
-        extra_headers={"Set-Cookie": build_session_cookie(token)},
+        extra_headers={
+            "Set-Cookie": build_session_cookie(token),
+            "X-Session-Token": token,
+        },
     )
 
 
